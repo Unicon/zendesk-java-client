@@ -568,6 +568,7 @@ public class Zendesk implements Closeable {
     }
     
     public Trigger createTrigger(Trigger trigger) {
+        // System.out.println("TRIGGER JSON:: " + new String(json(Collections.singletonMap("trigger", trigger))));
         return complete(submit(req("POST", cnst("/triggers.json"), JSON, json(Collections.singletonMap("trigger", trigger))),
               handle(Trigger.class, "trigger")));
     }
