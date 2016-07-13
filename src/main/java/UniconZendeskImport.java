@@ -58,7 +58,8 @@ public class UniconZendeskImport {
 
         uniconZendeskImport.importOrganizations();
         uniconZendeskImport.importGroups();
-        uniconZendeskImport.importTriggers();
+        // uniconZendeskImport.importTriggers();
+
         uniconZendeskImport.importTicketFields();
 
         log.info("Import of data from {} to {} COMPLETED", FROM_ZENDESK_URL, TO_ZENDESK_URL);
@@ -67,20 +68,30 @@ public class UniconZendeskImport {
     private void importOrganizations() {
         log.info("Importing organizations...");
 
-        for (Long fromOrganizationId : organizationIds) {
-            Organization fromOrganization = ZENDESK_FROM.getOrganization(fromOrganizationId);
+        Iterable<Organization> existingToOrganizations = ZENDESK_TO.getOrganizations();
 
-            if (fromOrganization == null) {
-                log.error("No organization found with ID {}", Long.toString(fromOrganizationId));
-                continue;
+        organizationLoop:
+        for (Long existingFromOrganizationId : organizationIds) {
+            Organization existingFromOrganization = ZENDESK_FROM.getOrganization(existingFromOrganizationId);
+
+            if (existingFromOrganization == null) {
+                log.error("No organization found with ID {}", Long.toString(existingFromOrganizationId));
+                continue organizationLoop;
+            }
+
+            for (Organization existingToOrganization : existingToOrganizations) {
+                if (existingToOrganization.getName().equals(existingFromOrganization.getName())) {
+                    log.info("Processing organization:: name: {} :: ORGANIZATION EXISTS ALREADY... SKIPPING", existingFromOrganization.getName());
+                    continue organizationLoop;
+                }
             }
 
             // import organization
-            Organization newOrganization = importOrganization(fromOrganization);
+            Organization newOrganization = importOrganization(existingFromOrganization);
             log.info("Imported organization:: new id: {}, name: {}", newOrganization.getId(), newOrganization.getName());
 
             // import users from organization
-            Iterable<User> organizationUsers = ZENDESK_FROM.getOrganizationUsers(fromOrganizationId);
+            Iterable<User> organizationUsers = ZENDESK_FROM.getOrganizationUsers(existingFromOrganizationId);
 
             importUsersIntoOrganization(organizationUsers, newOrganization.getId());
         }
@@ -275,6 +286,7 @@ public class UniconZendeskImport {
                 log.info("Added trigger:: {}", processingTrigger.getTitle());
             } catch (Exception e) {
                 // unspecified error, so we'll just skip for now
+                log.info("Error adding trigger:: {} -- Error: {}", processingTrigger.getTitle(), e.getMessage());
                 continue triggerLoop;
             }
         }
