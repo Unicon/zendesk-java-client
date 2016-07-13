@@ -59,6 +59,7 @@ public class UniconZendeskImport {
         uniconZendeskImport.importOrganizations();
         uniconZendeskImport.importGroups();
         // uniconZendeskImport.importTriggers();
+
         uniconZendeskImport.importTicketFields();
 
         log.info("Import of data from {} to {} COMPLETED", FROM_ZENDESK_URL, TO_ZENDESK_URL);
