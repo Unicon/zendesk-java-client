@@ -5,10 +5,12 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.zendesk.client.v2.Zendesk;
+import org.zendesk.client.v2.model.Field;
 import org.zendesk.client.v2.model.Group;
 import org.zendesk.client.v2.model.GroupMembership;
-import org.zendesk.client.v2.model.JobStatus;
+//import org.zendesk.client.v2.model.JobStatus;
 import org.zendesk.client.v2.model.Organization;
+import org.zendesk.client.v2.model.Trigger;
 import org.zendesk.client.v2.model.User;
 
 public class UniconZendeskImport {
@@ -31,6 +33,7 @@ public class UniconZendeskImport {
         21616897L, // Vandelay Inductries
         23783082L // Bogus Enterprises
     };
+
     /**
      * Groups to import
      */
@@ -40,6 +43,8 @@ public class UniconZendeskImport {
 
     public static void main(String[] args) {
         UniconZendeskImport uniconZendeskImport = new UniconZendeskImport();
+
+        log.info("Starting import of data from {} to {}", FROM_ZENDESK_URL, TO_ZENDESK_URL);
 
         ZENDESK_FROM = new Zendesk.Builder(FROM_ZENDESK_URL)
             .setUsername(FROM_ZENDESK_USERNAME)
@@ -52,11 +57,16 @@ public class UniconZendeskImport {
             .build();
 
         uniconZendeskImport.importOrganizations();
-
         uniconZendeskImport.importGroups();
+        uniconZendeskImport.importTriggers();
+        uniconZendeskImport.importTicketFields();
+
+        log.info("Import of data from {} to {} COMPLETED", FROM_ZENDESK_URL, TO_ZENDESK_URL);
     }
 
     private void importOrganizations() {
+        log.info("Importing organizations...");
+
         for (Long fromOrganizationId : organizationIds) {
             Organization fromOrganization = ZENDESK_FROM.getOrganization(fromOrganizationId);
 
@@ -67,6 +77,7 @@ public class UniconZendeskImport {
 
             // import organization
             Organization newOrganization = importOrganization(fromOrganization);
+            log.info("Imported organization:: new id: {}, name: {}", newOrganization.getId(), newOrganization.getName());
 
             // import users from organization
             Iterable<User> organizationUsers = ZENDESK_FROM.getOrganizationUsers(fromOrganizationId);
@@ -76,6 +87,7 @@ public class UniconZendeskImport {
     }
 
     private Organization importOrganization(Organization fromOrganization) {
+        log.info("Importing organization:: id: {}, name: {}", fromOrganization.getId(), fromOrganization.getName());
         Organization toOrganization = fromOrganization;
         toOrganization.setId(null);
         toOrganization.setCreatedAt(null);
@@ -92,7 +104,9 @@ public class UniconZendeskImport {
         return ZENDESK_TO.createOrganization(toOrganization);
     }
 
-    private void importUsersIntoOrganization(Iterable<User> existingFromUsers, long toOrganizationId) {
+    private void importUsersIntoOrganization(Iterable<User> existingFromUsers, Long toOrganizationId) {
+        log.info("Importing users into organization: {}", toOrganizationId);
+
         Iterable<User> existingToUsers = ZENDESK_TO.getUsers();
         List<User> usersToCreate = new ArrayList<>();
 
@@ -101,9 +115,13 @@ public class UniconZendeskImport {
         usersLoop:
         while (i.hasNext()) {
             User processingUser = i.next();
+
+            log.info("Processing user:: name: {}, email: {}", processingUser.getName(), processingUser.getEmail());
+
             for (User existingToUser : existingToUsers) {
                 if (existingToUser.getEmail().equals(processingUser.getEmail())) {
                     // user exists, skip creation
+                    log.info("Processing user:: name: {}, email: {} :: USER EXISTS ALREADY... SKIPPING", processingUser.getName(), processingUser.getEmail());
                     continue usersLoop;
                 }
             }
@@ -125,37 +143,22 @@ public class UniconZendeskImport {
     }
 
     private void createUsers(List<User> usersToCreate) {
-        JobStatus<User> jobStatus = ZENDESK_TO.createUsers(usersToCreate);
+        for (User userToCreate : usersToCreate) {
 
-        while (JobStatus.JobStatusEnum.working == jobStatus.getStatus() || JobStatus.JobStatusEnum.queued == jobStatus.getStatus()) {
-            log.info("Creating users:: users created: {}", jobStatus.getProgress());
+            User createdUser = null;
+
             try {
-                Thread.sleep(2000);
-            } catch(InterruptedException ex) {
-                Thread.currentThread().interrupt();
+                createdUser = ZENDESK_TO.createUser(userToCreate);
+                log.info("Created/updated user on {}:: name: {}, email: {}, id: {} ", TO_ZENDESK_URL, createdUser.getName(), createdUser.getEmail(), Long.toString(createdUser.getId()));
+            } catch (Exception e) {
+                log.error("Error creating user:: name: {}, email: {}", userToCreate.getName(), userToCreate.getEmail(), e);
             }
-            jobStatus = ZENDESK_TO.getJobStatus(jobStatus);
-
-            if (JobStatus.JobStatusEnum.failed == jobStatus.getStatus()) {
-                log.error("Error importing:: {}", jobStatus.getMessage());
-                break;
-            }
-            if (JobStatus.JobStatusEnum.killed == jobStatus.getStatus()) {
-                log.error("Killed importing:: {}", jobStatus.getMessage());
-                break;
-            }
-            if (JobStatus.JobStatusEnum.completed == jobStatus.getStatus()) {
-                log.info("Importing users COMPLETED. {}", jobStatus.getMessage());
-                break;
-            }
-        }
-
-        for (User newUser : jobStatus.getResults()) {
-            log.info("Creating/updating user on {}:: name: {}, email: {} ", TO_ZENDESK_URL, newUser.getName(), newUser.getEmail());
         }
     }
 
     private void importGroups() {
+        log.info("Importing groups...");
+
         Iterable<Group> existingToGroups = ZENDESK_TO.getGroups();
 
         groupIdLoop:
@@ -167,9 +170,12 @@ public class UniconZendeskImport {
                 continue groupIdLoop;
             }
 
+            log.info("Importing group:: name: {}, id: {}", existingFromGroup.getName(), existingFromGroup.getId());
+
             for (Group existingToGroup : existingToGroups) {
                 if (existingToGroup.getName().equals(existingFromGroup.getName())) {
                     // group exists, skip creation
+                    log.info("Importing group:: name: {}, id: {} :: GROUP EXISTS ALREADY... SKIPPING", existingFromGroup.getName(), existingFromGroup.getId());
                     continue groupIdLoop;
                 }
             }
@@ -181,8 +187,10 @@ public class UniconZendeskImport {
         }
     }
 
-    private void importUsersIntoGroup(long fromGroupId, Group toGroup) {
-        long toGroupId = toGroup.getId();
+    private void importUsersIntoGroup(Long fromGroupId, Group toGroup) {
+        log.info("Importing users into group: {}", toGroup.getName());
+
+        Long toGroupId = toGroup.getId();
         Iterable<User> existingFromGroupUsers = ZENDESK_FROM.getGroupUsers(fromGroupId);
         List<GroupMembership> toGroupMemberships = ZENDESK_TO.getGroupMemberships(toGroupId);
         Iterable<User> existingUsers = ZENDESK_TO.getUsers();
@@ -205,13 +213,24 @@ public class UniconZendeskImport {
 
             if (processingUser == null) {
                 existingFromGroupUser.setId(null);
+                existingFromGroupUser.setUrl(null);
+                existingFromGroupUser.setCreatedAt(null);
+                existingFromGroupUser.setUpdatedAt(null);
+                existingFromGroupUser.setActive(null);
+                existingFromGroupUser.setShared(null);
+                existingFromGroupUser.setLocaleId(null);
+                existingFromGroupUser.setLastLoginAt(null);
+                existingFromGroupUser.setOrganizationId(null);
+
                 processingUser = ZENDESK_TO.createUser(existingFromGroupUser);
+                log.info("Created/updated user on {}:: name: {}, email: {} ", TO_ZENDESK_URL, processingUser.getName(), processingUser.getEmail(), Long.toString(processingUser.getId()));
             }
 
             // add user to group
             for (GroupMembership toGroupMembership : toGroupMemberships) {
-                if (toGroupMembership.getUserId() == existingFromGroupUser.getId()) {
+                if (toGroupMembership.getUserId().longValue() == processingUser.getId().longValue()) {
                     // user exists in group, skip adding
+                    log.info("User {} exists in group {} already... SKIPPING", processingUser.getName(), toGroup.getName());
                     continue usersLoop;
                 }
             }
@@ -220,8 +239,78 @@ public class UniconZendeskImport {
             newGroupMembership.setUserId(processingUser.getId());
             newGroupMembership.setGroupId(toGroupId);
 
-            ZENDESK_TO.createGroupMembership(newGroupMembership);
+            try {
+                ZENDESK_TO.createGroupMembership(newGroupMembership);
+                log.info("Added user: {} to group: {}", processingUser.getName(), toGroup.getName());
+            } catch (Exception e) {
+                log.error("Error adding user: {} to group: {}", processingUser.getName(), toGroup.getName(), e);
+            }
         }
     }
 
+    private void importTriggers() {
+        log.info("Importing triggers...");
+
+        Iterable<Trigger> existingFromTriggers = ZENDESK_FROM.getTriggers();
+        Iterable<Trigger> existingToTriggers = ZENDESK_TO.getTriggers();
+        Iterator<Trigger> i = existingFromTriggers.iterator();
+
+        triggerLoop:
+        while (i.hasNext()) {
+            Trigger processingTrigger = i.next();
+
+            for (Trigger existingToTrigger : existingToTriggers) {
+                if (existingToTrigger.getTitle().equals(processingTrigger.getTitle())) {
+                    log.info("Trigger {} exists already... SKIPPING", processingTrigger.getTitle());
+                    continue triggerLoop;
+                }
+            }
+
+            processingTrigger.setId(null);
+            processingTrigger.setCreatedAt(null);
+            processingTrigger.setUpdatedAt(null);
+
+            try {
+                ZENDESK_TO.createTrigger(processingTrigger);
+                log.info("Added trigger:: {}", processingTrigger.getTitle());
+            } catch (Exception e) {
+                // unspecified error, so we'll just skip for now
+                continue triggerLoop;
+            }
+        }
+    }
+
+    private void importTicketFields() {
+        log.info("Importing ticket fields...");
+
+        List<Field> existingFromTicketFields = ZENDESK_FROM.getTicketFields();
+        List<Field> existingToTicketFields = ZENDESK_TO.getTicketFields();
+        Iterator<Field> i = existingFromTicketFields.iterator();
+
+        ticketFieldLoop:
+            while (i.hasNext()) {
+                Field processingTicketField = i.next();
+
+                for (Field existingToTicketField : existingToTicketFields) {
+                    if (existingToTicketField.getTitle().equals(processingTicketField.getTitle())) {
+                        log.info("Ticket field {} exists already... SKIPPING", processingTicketField.getTitle());
+                        continue ticketFieldLoop;
+                    }
+                }
+
+                processingTicketField.setId(null);
+                processingTicketField.setCreatedAt(null);
+                processingTicketField.setUpdatedAt(null);
+                processingTicketField.setSystemFieldOptions(null);
+                processingTicketField.setRemovable(null);
+
+                try {
+                    ZENDESK_TO.createTicketField(processingTicketField);
+                    log.info("Added ticket field:: {}", processingTicketField.getTitle());
+                } catch (Exception e) {
+                    log.error("Error adding ticket field: {}", processingTicketField.getTitle(), e);
+                    continue ticketFieldLoop;
+                }
+            }
+    }
 }
